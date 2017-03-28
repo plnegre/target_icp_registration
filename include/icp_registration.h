@@ -7,7 +7,7 @@
 #include <tf/transform_listener.h>
 #include <tf_conversions/tf_eigen.h>
 #include <sensor_msgs/PointCloud2.h>
-#include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/Pose.h>
 #include <std_srvs/Empty.h>
 
 #include <pcl_ros/point_cloud.h>
@@ -24,6 +24,7 @@
 #include <pcl/sample_consensus/model_types.h>
 #include <pcl/segmentation/sac_segmentation.h>
 
+#include <string>
 #include <boost/lexical_cast.hpp>
 
 typedef pcl::PointXYZRGB Point;
@@ -88,7 +89,11 @@ class IcpRegistration {
   std::string target_frame_id_;
   std::string robot_frame_id_;
   std::string world_frame_id_;
+  std::string target_tf_topic_;
   bool remove_ground_;
+  double ground_height_;
+  double max_icp_dist_;
+  double max_icp_score_;
 
   // Operational variables
   PointCloud::Ptr original_target_;
