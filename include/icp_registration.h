@@ -78,7 +78,6 @@ class IcpRegistration {
   ros::Publisher dbg_reg_cloud_pub_;
   ros::Publisher dbg_obj_cloud_pub_;
   ros::Publisher target_pose_pub_;
-  ros::Publisher dbg_target_pose_pub_;
   ros::ServiceServer enable_srv_;
   ros::ServiceServer disable_srv_;
   tf::TransformBroadcaster tf_broadcaster_;

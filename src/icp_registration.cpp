@@ -30,8 +30,6 @@ IcpRegistration::IcpRegistration() :
     "dbg_obj_cloud", 1);
   target_pose_pub_ = nh_.advertise<geometry_msgs::Pose>(
     target_tf_topic_, 1);
-  dbg_target_pose_pub_ = nh_private_.advertise<geometry_msgs::PoseStamped>(
-    "object_pose", 1);
 
   // Services
   enable_srv_ = nh_private_.advertiseService("enable",
@@ -313,8 +311,7 @@ void IcpRegistration::publish(const tf::Transform& robot_to_target,
                          target_frame_id_));
 
   // Publish geometry message from world frame id
-  if (target_pose_pub_.getNumSubscribers() > 0 ||
-      dbg_target_pose_pub_.getNumSubscribers() > 0) {
+  if (target_pose_pub_.getNumSubscribers() > 0) {
     try {
       ros::Time now = ros::Time::now();
       tf::StampedTransform world2robot;
@@ -324,8 +321,7 @@ void IcpRegistration::publish(const tf::Transform& robot_to_target,
       tf_listener_.lookupTransform(world_frame_id_,
           robot_frame_id_, now, world2robot);
 
-      // Compose the messages (2 different messages due to interface with
-      // other nodes)
+      // Compose the message
       geometry_msgs::Pose pose_msg;
       tf::Transform world2target = world2robot * robot_to_target;
       pose_msg.position.x = world2target.getOrigin().x();
@@ -336,12 +332,6 @@ void IcpRegistration::publish(const tf::Transform& robot_to_target,
       pose_msg.orientation.z = world2target.getRotation().z();
       pose_msg.orientation.w = world2target.getRotation().w();
       target_pose_pub_.publish(pose_msg);
-
-      geometry_msgs::PoseStamped dbg_pose_msg;
-      dbg_pose_msg.pose = pose_msg;
-      dbg_pose_msg.header.stamp = stamp;
-      dbg_pose_msg.header.frame_id = target_frame_id_;
-      dbg_target_pose_pub_.publish(dbg_pose_msg);
     } catch (tf::TransformException ex) {
       ROS_WARN_STREAM("[IcpRegistration]: Cannot find the tf between " <<
         "world frame id and camera. " << ex.what());
