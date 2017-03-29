@@ -98,6 +98,7 @@ class IcpRegistration {
   double max_icp_dist_;
   double max_icp_score_;
   bool use_color_;
+  double reset_timeout_;
 
   // Operational variables
   PointCloudRGB::Ptr original_target_;
@@ -107,6 +108,8 @@ class IcpRegistration {
   tf::Transform last_pose_;
   ros::Time last_detection_;
   bool robot2camera_init_;
+  bool first_iter_;
+  double last_yaw_;
 
 };
 

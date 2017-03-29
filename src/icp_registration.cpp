@@ -19,6 +19,8 @@ IcpRegistration::IcpRegistration() :
   nh_private_.param("max_icp_dist",     max_icp_dist_,    2.0);
   nh_private_.param("max_icp_score",    max_icp_score_,   0.0001);
   nh_private_.param("use_color",        use_color_,       true);
+  nh_private_.param("reset_timeout",    reset_timeout_,   6.0);
+
 
 
   // Subscribers and publishers
@@ -98,7 +100,7 @@ void IcpRegistration::pointCloudCb(const sensor_msgs::PointCloud2::ConstPtr& in_
   PointCloudRGB::Ptr target(new PointCloudRGB);
   pcl::copyPointCloud(*original_target_, *target);
   double elapsed = fabs(last_detection_.toSec() - ros::Time::now().toSec());
-  if (elapsed > 2.0) {
+  if (elapsed > reset_timeout_) {
     // Move to center
     Eigen::Vector4f centroid;
     pcl::compute3DCentroid(*cloud, centroid);
@@ -107,9 +109,11 @@ void IcpRegistration::pointCloudCb(const sensor_msgs::PointCloud2::ConstPtr& in_
     tf_01.setOrigin(tf::Vector3(centroid[0], centroid[1], centroid[2]));
     move(target, tf_01);
     last_pose_ = tf_01;
+    first_iter_ = true;
   } else {
     // Move to last detected position
     move(target, last_pose_);
+    first_iter_ = false;
   }
 
   // Registration
@@ -117,6 +121,7 @@ void IcpRegistration::pointCloudCb(const sensor_msgs::PointCloud2::ConstPtr& in_
   double score;
   tf::Transform target_pose;
   pairAlign(target, cloud, target_pose, converged, score);
+
   double dist = eucl(last_pose_, target_pose);
   if (converged) {
     ROS_INFO_STREAM("[IcpRegistration]: Icp converged. Score: " <<
@@ -126,6 +131,25 @@ void IcpRegistration::pointCloudCb(const sensor_msgs::PointCloud2::ConstPtr& in_
     ROS_INFO_STREAM("[IcpRegistration]: Target found with score of " <<
       score);
 
+    double roll, pitch, yaw;
+    tf::Matrix3x3((target_pose * last_pose_).getRotation()).getRPY(roll, pitch, yaw);
+    if(!first_iter_) {
+      while(yaw < 0.0) yaw += 2*M_PI;
+      while(yaw > 2*M_PI) yaw -= 2*M_PI;
+      double diff;
+      if (yaw > last_yaw_) {
+        diff = yaw-last_yaw_;
+      } else {
+        diff = last_yaw_-yaw;
+      }
+      while(diff < 0.0) diff += 2*M_PI;
+      while(diff > 2*M_PI) diff -= 2*M_PI;
+      ROS_INFO_STREAM("[IcpRegistration]: Angle diff: " << diff*180/M_PI << "dg.");
+      if (diff > 20*M_PI/180 && diff < 340*M_PI/180) return;
+    }
+    last_yaw_ = yaw;
+
+    // Update
     last_pose_ = target_pose * last_pose_;
     last_detection_ = ros::Time::now();
 
@@ -301,8 +325,17 @@ void IcpRegistration::removeGround(PointCloudRGB::Ptr cloud,
   }
 }
 
-void IcpRegistration::publish(const tf::Transform& robot_to_target,
+void IcpRegistration::publish(const tf::Transform& robot_to_target_in,
                               const ros::Time& stamp) {
+
+  tf::Transform robot_to_target = robot_to_target_in;
+  tf::Matrix3x3 rot = robot_to_target.getBasis();
+  double r, p, y;
+  rot.getRPY(r, p, y);
+  tf::Quaternion q;
+  q.setRPY(0.0, 0.0, y);
+  robot_to_target.setRotation(q);
+
   // Publish tf
   tf_broadcaster_.sendTransform(
     tf::StampedTransform(robot_to_target,
