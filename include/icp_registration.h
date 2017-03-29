@@ -27,8 +27,10 @@
 #include <string>
 #include <boost/lexical_cast.hpp>
 
-typedef pcl::PointXYZRGB Point;
+typedef pcl::PointXYZ Point;
+typedef pcl::PointXYZRGB PointRGB;
 typedef pcl::PointCloud<Point> PointCloud;
+typedef pcl::PointCloud<PointRGB> PointCloudRGB;
 typedef pcl::IterativeClosestPoint<Point, Point> IterativeClosestPoint;
 
 class IcpRegistration {
@@ -38,17 +40,17 @@ class IcpRegistration {
  protected:
   void pointCloudCb(const sensor_msgs::PointCloud2::ConstPtr& in_cloud);
 
-  void pairAlign(PointCloud::Ptr src,
-                 PointCloud::Ptr tgt,
+  void pairAlign(PointCloudRGB::Ptr src,
+                 PointCloudRGB::Ptr tgt,
                  tf::Transform &output,
                  bool &converged,
                  double &score);
 
-  void filter(PointCloud::Ptr cloud,
+  void filter(PointCloudRGB::Ptr cloud,
               const bool& passthrough = false,
               const bool& statistical = false);
 
-  void removeGround(PointCloud::Ptr cloud, const ros::Time& stamp);
+  void removeGround(PointCloudRGB::Ptr cloud, const ros::Time& stamp);
 
   void publish(const tf::Transform& cam_to_target,
                const ros::Time& stamp);
@@ -57,7 +59,7 @@ class IcpRegistration {
 
   tf::Transform matrix4fToTf(const Eigen::Matrix4f& in);
 
-  void move(const PointCloud::Ptr& cloud, const tf::Transform& trans);
+  void move(const PointCloudRGB::Ptr& cloud, const tf::Transform& trans);
 
   double eucl(const tf::Transform& a, const tf::Transform& b);
 
@@ -94,9 +96,10 @@ class IcpRegistration {
   double ground_height_;
   double max_icp_dist_;
   double max_icp_score_;
+  bool use_color_;
 
   // Operational variables
-  PointCloud::Ptr original_target_;
+  PointCloudRGB::Ptr original_target_;
   bool target_readed_;
   bool enable_;
   int in_clouds_num_;

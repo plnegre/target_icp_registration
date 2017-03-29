@@ -2,7 +2,7 @@
 
 
 IcpRegistration::IcpRegistration() :
-  nh_private_("~"), original_target_(new PointCloud), target_readed_(false),
+  nh_private_("~"), original_target_(new PointCloudRGB), target_readed_(false),
   enable_(false), in_clouds_num_(0), last_detection_(ros::Time(-100)),
   robot2camera_init_(false) {
   // Read params
@@ -18,6 +18,8 @@ IcpRegistration::IcpRegistration() :
   nh_private_.param("ground_height",    ground_height_,   0.09);
   nh_private_.param("max_icp_dist",     max_icp_dist_,    2.0);
   nh_private_.param("max_icp_score",    max_icp_score_,   0.0001);
+  nh_private_.param("use_color",        use_color_,       true);
+
 
   // Subscribers and publishers
   point_cloud_sub_ = nh_.subscribe(
@@ -41,7 +43,7 @@ void IcpRegistration::pointCloudCb(const sensor_msgs::PointCloud2::ConstPtr& in_
     ROS_INFO_STREAM("[IcpRegistration]: Loading target for the first time...");
 
     // Opening target
-    if (pcl::io::loadPCDFile<Point>(target_file_, *original_target_) == -1) {
+    if (pcl::io::loadPCDFile<PointRGB>(target_file_, *original_target_) == -1) {
       ROS_ERROR_STREAM("[IcpRegistration]: Couldn't read file " <<
         target_file_);
       return;
@@ -58,8 +60,8 @@ void IcpRegistration::pointCloudCb(const sensor_msgs::PointCloud2::ConstPtr& in_
   }
 
   // Copy
-  PointCloud::Ptr original(new PointCloud);
-  PointCloud::Ptr cloud(new PointCloud);
+  PointCloudRGB::Ptr original(new PointCloudRGB);
+  PointCloudRGB::Ptr cloud(new PointCloudRGB);
   fromROSMsg(*in_cloud, *cloud);
   fromROSMsg(*in_cloud, *original);
 
@@ -71,7 +73,7 @@ void IcpRegistration::pointCloudCb(const sensor_msgs::PointCloud2::ConstPtr& in_
   // Translate the cloud to the robot frame id to remove the camera orientation effect
   if (!robot2camera_init_) {
     bool ok = getRobot2Camera(in_cloud->header.frame_id);
-    if (!ok) return;
+    if (!ok) robot2camera_.setIdentity();
   }
   move(cloud, robot2camera_);
 
@@ -88,7 +90,7 @@ void IcpRegistration::pointCloudCb(const sensor_msgs::PointCloud2::ConstPtr& in_
   }
 
   // Move target
-  PointCloud::Ptr target(new PointCloud);
+  PointCloudRGB::Ptr target(new PointCloudRGB);
   pcl::copyPointCloud(*original_target_, *target);
   double elapsed = fabs(last_detection_.toSec() - ros::Time::now().toSec());
   if (elapsed > 2.0) {
@@ -128,15 +130,15 @@ void IcpRegistration::pointCloudCb(const sensor_msgs::PointCloud2::ConstPtr& in_
     // Debug cloud
     if (dbg_reg_cloud_pub_.getNumSubscribers() > 0) {
       move(original, robot2camera_);
-      PointCloud::Ptr dbg_cloud(new PointCloud);
+      PointCloudRGB::Ptr dbg_cloud(new PointCloudRGB);
       pcl::copyPointCloud(*original, *dbg_cloud);
 
       // Add target to debug cloud
       move(target, target_pose);
 
-      PointCloud::Ptr target_color(new PointCloud);
+      PointCloudRGB::Ptr target_color(new PointCloudRGB);
       for (uint i=0; i < target->size(); i++) {
-        Point prgb(0, 255, 0);
+        PointRGB prgb(0, 255, 0);
         prgb.x = target->points[i].x;
         prgb.y = target->points[i].y;
         prgb.z = target->points[i].z;
@@ -159,7 +161,7 @@ void IcpRegistration::pointCloudCb(const sensor_msgs::PointCloud2::ConstPtr& in_
   // Publish debug cloud
   if (dbg_reg_cloud_pub_.getNumSubscribers() > 0) {
     move(original, robot2camera_);
-    PointCloud::Ptr dbg_cloud(new PointCloud);
+    PointCloudRGB::Ptr dbg_cloud(new PointCloudRGB);
     pcl::copyPointCloud(*original, *dbg_cloud);
 
     // Publish
@@ -171,13 +173,19 @@ void IcpRegistration::pointCloudCb(const sensor_msgs::PointCloud2::ConstPtr& in_
   }
 }
 
-void IcpRegistration::pairAlign(PointCloud::Ptr src,
-               PointCloud::Ptr tgt,
-               tf::Transform &output,
-               bool &converged,
-               double &score) {
+void IcpRegistration::pairAlign(PointCloudRGB::Ptr src,
+                                PointCloudRGB::Ptr tgt,
+                                tf::Transform &output,
+                                bool &converged,
+                                double &score) {
   ROS_INFO_STREAM("[IcpRegistration]: Target pointcloud " << src->size() <<
     " points. Scene pointcloud " << tgt->size() << " points.");
+  // Remove color from pointcloud
+  PointCloud::Ptr src_no_color(new PointCloud);
+  PointCloud::Ptr tgt_no_color(new PointCloud);
+  pcl::copyPointCloud(*src, *src_no_color);
+  pcl::copyPointCloud(*tgt, *tgt_no_color);
+
   // Align
   PointCloud::Ptr aligned(new PointCloud);
   IterativeClosestPoint icp;
@@ -186,8 +194,8 @@ void IcpRegistration::pairAlign(PointCloud::Ptr src,
   icp.setTransformationEpsilon(0.00001);
   icp.setEuclideanFitnessEpsilon(0.001);
   icp.setMaximumIterations(100);
-  icp.setInputSource(src);
-  icp.setInputTarget(tgt);
+  icp.setInputSource(src_no_color);
+  icp.setInputTarget(tgt_no_color);
   icp.align(*aligned);
 
   // The transform
@@ -198,28 +206,28 @@ void IcpRegistration::pairAlign(PointCloud::Ptr src,
   score = icp.getFitnessScore();
 }
 
-void IcpRegistration::filter(PointCloud::Ptr cloud,
+void IcpRegistration::filter(PointCloudRGB::Ptr cloud,
                              const bool& passthrough,
                              const bool& statistical) {
   std::vector<int> indicies;
   pcl::removeNaNFromPointCloud(*cloud, *cloud, indicies);
 
   if (passthrough) {
-    pcl::PassThrough<Point> pass;
+    pcl::PassThrough<PointRGB> pass;
     pass.setFilterFieldName("z");
     pass.setFilterLimits(min_range_, max_range_);
     pass.setInputCloud(cloud);
     pass.filter(*cloud);
   }
 
-  pcl::ApproximateVoxelGrid<Point> grid;
+  pcl::ApproximateVoxelGrid<PointRGB> grid;
   grid.setLeafSize(voxel_size_, voxel_size_, voxel_size_);
   grid.setDownsampleAllData(true);
   grid.setInputCloud(cloud);
   grid.filter(*cloud);
 
   if (statistical) {
-    pcl::RadiusOutlierRemoval<Point> outrem;
+    pcl::RadiusOutlierRemoval<PointRGB> outrem;
     outrem.setInputCloud(cloud);
     outrem.setRadiusSearch(0.2);
     outrem.setMinNeighborsInRadius(100);
@@ -227,19 +235,33 @@ void IcpRegistration::filter(PointCloud::Ptr cloud,
   }
 }
 
-void IcpRegistration::removeGround(PointCloud::Ptr cloud, const ros::Time& stamp) {
+void IcpRegistration::removeGround(PointCloudRGB::Ptr cloud,
+                                   const ros::Time& stamp) {
   pcl::ModelCoefficients::Ptr coefficients (new pcl::ModelCoefficients);
   pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
-  pcl::SACSegmentation<Point> seg;
-  seg.setModelType(pcl::SACMODEL_PLANE);
-  seg.setMethodType(pcl::SAC_RANSAC);
-  seg.setDistanceThreshold(ground_height_);
-  seg.setInputCloud(cloud);
-  seg.segment(*inliers, *coefficients);
+
+  // Will depend on the use of color
+  if (!use_color_) {
+    PointCloud::Ptr cloud_no_color(new PointCloud);
+    pcl::copyPointCloud(*cloud, *cloud_no_color);
+    pcl::SACSegmentation<Point> seg;
+    seg.setModelType(pcl::SACMODEL_PLANE);
+    seg.setMethodType(pcl::SAC_RANSAC);
+    seg.setDistanceThreshold(ground_height_);
+    seg.setInputCloud(cloud_no_color);
+    seg.segment(*inliers, *coefficients);
+  } else {
+    pcl::SACSegmentation<PointRGB> seg;
+    seg.setModelType(pcl::SACMODEL_PLANE);
+    seg.setMethodType(pcl::SAC_RANSAC);
+    seg.setDistanceThreshold(ground_height_);
+    seg.setInputCloud(cloud);
+    seg.segment(*inliers, *coefficients);
+  }
 
   double mean_z;
-  PointCloud::Ptr ground(new PointCloud);
-  PointCloud::Ptr objects(new PointCloud);
+  PointCloudRGB::Ptr ground(new PointCloudRGB);
+  PointCloudRGB::Ptr objects(new PointCloudRGB);
   for (int i=0; i < (int)cloud->size(); i++) {
     if (std::find(inliers->indices.begin(), inliers->indices.end(), i) == inliers->indices.end()) {
       objects->push_back(cloud->points[i]);
@@ -251,7 +273,7 @@ void IcpRegistration::removeGround(PointCloud::Ptr cloud, const ros::Time& stamp
   mean_z = mean_z / ground->size();
 
   // Filter outliers in the objects
-  PointCloud::Ptr object_inliers(new PointCloud);
+  PointCloudRGB::Ptr object_inliers(new PointCloudRGB);
   for (uint i=0; i < objects->size(); i++) {
     if ( fabs(objects->points[i].z - mean_z) < 0.35)
       object_inliers->push_back(objects->points[i]);
@@ -329,7 +351,7 @@ tf::Transform IcpRegistration::matrix4fToTf(const Eigen::Matrix4f& in) {
   return out;
 }
 
-void IcpRegistration::move(const PointCloud::Ptr& cloud,
+void IcpRegistration::move(const PointCloudRGB::Ptr& cloud,
                            const tf::Transform& trans) {
   Eigen::Affine3d trans_eigen;
   transformTFToEigen(trans, trans_eigen);
