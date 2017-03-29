@@ -7,7 +7,7 @@ IcpRegistration::IcpRegistration() :
   robot2camera_init_(false) {
   // Read params
   nh_private_.param("min_range",        min_range_,       1.0);
-  nh_private_.param("max_range",        max_range_,       2.0);
+  nh_private_.param("max_range",        max_range_,       2.5);
   nh_private_.param("voxel_size",       voxel_size_,      0.02);
   nh_private_.param("target",           target_file_,     std::string("target.pcd"));
   nh_private_.param("robot_frame_id",   robot_frame_id_,  std::string("robot"));
@@ -30,6 +30,8 @@ IcpRegistration::IcpRegistration() :
     "dbg_obj_cloud", 1);
   target_pose_pub_ = nh_.advertise<geometry_msgs::Pose>(
     target_tf_topic_, 1);
+  dbg_target_pose_pub_ = nh_private_.advertise<geometry_msgs::PoseStamped>(
+    "object_pose", 1);
 
   // Services
   enable_srv_ = nh_private_.advertiseService("enable",
@@ -73,19 +75,24 @@ void IcpRegistration::pointCloudCb(const sensor_msgs::PointCloud2::ConstPtr& in_
   // Translate the cloud to the robot frame id to remove the camera orientation effect
   if (!robot2camera_init_) {
     bool ok = getRobot2Camera(in_cloud->header.frame_id);
-    if (!ok) robot2camera_.setIdentity();
+    if (!ok) return;
   }
   move(cloud, robot2camera_);
 
   // Filter input cloud
   filter(cloud, true, true);
 
+  if (cloud->points.size() < 100) {
+    ROS_WARN("[IcpRegistration]: Input cloud has not enough points after filtering.");
+    return;
+  }
+
   // Remove ground
   if (remove_ground_)
     removeGround(cloud, in_cloud->header.stamp);
 
   if (cloud->points.size() < 100) {
-    ROS_WARN("[IcpRegistration]: Input cloud has not enough points after filtering.");
+    ROS_WARN("[IcpRegistration]: Input cloud has not enough points after ground filtering.");
     return;
   }
 
@@ -296,17 +303,18 @@ void IcpRegistration::removeGround(PointCloudRGB::Ptr cloud,
   }
 }
 
-void IcpRegistration::publish(const tf::Transform& cam_to_target,
+void IcpRegistration::publish(const tf::Transform& robot_to_target,
                               const ros::Time& stamp) {
   // Publish tf
   tf_broadcaster_.sendTransform(
-    tf::StampedTransform(cam_to_target,
+    tf::StampedTransform(robot_to_target,
                          stamp,
                          robot_frame_id_,
                          target_frame_id_));
 
   // Publish geometry message from world frame id
-  if (target_pose_pub_.getNumSubscribers() > 0) {
+  if (target_pose_pub_.getNumSubscribers() > 0 ||
+      dbg_target_pose_pub_.getNumSubscribers() > 0) {
     try {
       ros::Time now = ros::Time::now();
       tf::StampedTransform world2robot;
@@ -316,9 +324,10 @@ void IcpRegistration::publish(const tf::Transform& cam_to_target,
       tf_listener_.lookupTransform(world_frame_id_,
           robot_frame_id_, now, world2robot);
 
-      // Compose the message
+      // Compose the messages (2 different messages due to interface with
+      // other nodes)
       geometry_msgs::Pose pose_msg;
-      tf::Transform world2target = world2robot * cam_to_target;
+      tf::Transform world2target = world2robot * robot_to_target;
       pose_msg.position.x = world2target.getOrigin().x();
       pose_msg.position.y = world2target.getOrigin().y();
       pose_msg.position.z = world2target.getOrigin().z();
@@ -327,6 +336,12 @@ void IcpRegistration::publish(const tf::Transform& cam_to_target,
       pose_msg.orientation.z = world2target.getRotation().z();
       pose_msg.orientation.w = world2target.getRotation().w();
       target_pose_pub_.publish(pose_msg);
+
+      geometry_msgs::PoseStamped dbg_pose_msg;
+      dbg_pose_msg.pose = pose_msg;
+      dbg_pose_msg.header.stamp = stamp;
+      dbg_pose_msg.header.frame_id = target_frame_id_;
+      dbg_target_pose_pub_.publish(dbg_pose_msg);
     } catch (tf::TransformException ex) {
       ROS_WARN_STREAM("[IcpRegistration]: Cannot find the tf between " <<
         "world frame id and camera. " << ex.what());

@@ -8,6 +8,7 @@
 #include <tf_conversions/tf_eigen.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <geometry_msgs/Pose.h>
+#include <geometry_msgs/PoseStamped.h>
 #include <std_srvs/Empty.h>
 
 #include <pcl_ros/point_cloud.h>
@@ -52,7 +53,7 @@ class IcpRegistration {
 
   void removeGround(PointCloudRGB::Ptr cloud, const ros::Time& stamp);
 
-  void publish(const tf::Transform& cam_to_target,
+  void publish(const tf::Transform& robot_to_target,
                const ros::Time& stamp);
 
   bool getRobot2Camera(const std::string& camera_frame_id);
@@ -77,6 +78,7 @@ class IcpRegistration {
   ros::Publisher dbg_reg_cloud_pub_;
   ros::Publisher dbg_obj_cloud_pub_;
   ros::Publisher target_pose_pub_;
+  ros::Publisher dbg_target_pose_pub_;
   ros::ServiceServer enable_srv_;
   ros::ServiceServer disable_srv_;
   tf::TransformBroadcaster tf_broadcaster_;
